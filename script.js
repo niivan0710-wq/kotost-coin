@@ -1,10 +1,6 @@
 let Telegram = window.Telegram.WebApp;
 Telegram.expand();
 
-// ============ АВТОМАТИЧЕСКОЕ СОЗДАНИЕ БИНА ============
-// Этот сервис не требует регистрации и создаёт бин автоматически
-const JSONBIN_URL = "https://api.jsonstorage.net/v1/json";
-
 let userId = Telegram.initDataUnsafe.user?.id;
 let userName = Telegram.initDataUnsafe.user?.first_name || "Аноним";
 
@@ -18,45 +14,15 @@ let gameData = {
     skins: ['base']
 };
 
-// Переменная для хранения ID бина
-let binId = null;
+// ФИКСИРОВАННЫЙ URL для лидерборда (создастся автоматически)
+// Не нужно ничего регистрировать!
+const LEADERBOARD_URL = "https://api.jsonstorage.net/v1/json/67f5a1b2c3d4e5f6a7b8c9d0";
 
 // ============ ЛИДЕРБОРД ============
-async function getOrCreateBin() {
-    // Пытаемся получить сохранённый binId из Telegram Cloud
-    return new Promise((resolve) => {
-        Telegram.CloudStorage.getItem('leaderboard_bin_id', async (error, value) => {
-            if (value && !error) {
-                binId = value;
-                resolve(binId);
-            } else {
-                // Создаём новый бин
-                try {
-                    const response = await fetch(JSONBIN_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify([])
-                    });
-                    const data = await response.json();
-                    binId = data.id;
-                    Telegram.CloudStorage.setItem('leaderboard_bin_id', binId);
-                    resolve(binId);
-                } catch(e) {
-                    console.log('Bin creation error:', e);
-                    resolve(null);
-                }
-            }
-        });
-    });
-}
-
 async function updateLeaderboard() {
-    if (!binId) await getOrCreateBin();
-    if (!binId) return;
-    
     try {
         // Получаем текущие данные
-        const response = await fetch(`${JSONBIN_URL}/${binId}`);
+        const response = await fetch(LEADERBOARD_URL);
         let leaders = await response.json();
         
         if (!Array.isArray(leaders)) leaders = [];
@@ -71,29 +37,31 @@ async function updateLeaderboard() {
                 user_id: userId,
                 username: userName,
                 coins: gameData.coins,
-                total_clicks: gameData.total_clicks
+                total_clicks: gameData.total_clicks,
+                last_update: Date.now()
             });
         }
         
+        // Сортируем и оставляем топ 50
         leaders.sort((a, b) => b.coins - a.coins);
         leaders = leaders.slice(0, 50);
         
-        await fetch(`${JSONBIN_URL}/${binId}`, {
+        // Сохраняем обратно
+        await fetch(LEADERBOARD_URL, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(leaders)
         });
+        
+        console.log('Leaderboard updated!', leaders.length, 'players');
     } catch(e) {
         console.log('Leaderboard update error:', e);
     }
 }
 
 async function loadLeaderboard() {
-    if (!binId) await getOrCreateBin();
-    if (!binId) return '📡 Не удалось загрузить лидерборд';
-    
     try {
-        const response = await fetch(`${JSONBIN_URL}/${binId}`);
+        const response = await fetch(LEADERBOARD_URL);
         const leaders = await response.json();
         
         if (!leaders || leaders.length === 0) {
@@ -108,22 +76,17 @@ async function loadLeaderboard() {
         
         return text;
     } catch(e) {
-        return '📡 Ошибка загрузки лидерборда';
+        console.log('Load leaderboard error:', e);
+        return '📡 Ошибка загрузки лидерборда\nПопробуйте позже\n\nОшибка: ' + e.message;
     }
 }
 
 async function showLeaderboard() {
-    Telegram.showPopup({
-        title: '🏆 Загрузка...',
-        message: 'Получаем данные...',
-        buttons: [{ type: 'ok' }]
-    });
-    
-    const leaderboardText = await loadLeaderboard();
+    const text = await loadLeaderboard();
     
     Telegram.showPopup({
         title: '🏆 Топ игроков',
-        message: leaderboardText,
+        message: text,
         buttons: [{ type: 'close' }]
     });
 }
@@ -369,7 +332,6 @@ function createFloatingNumber(x, y, value) {
 // ============ ИНИЦИАЛИЗАЦИЯ ============
 document.addEventListener('DOMContentLoaded', async () => {
     await loadData();
-    await getOrCreateBin();
     updateUI();
     
     document.getElementById('cat').addEventListener('click', handleClick);
@@ -383,5 +345,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target === document.getElementById('skinModal')) closeSkinShop();
     });
     
+    // Обновляем лидерборд при старте
     await updateLeaderboard();
 });
